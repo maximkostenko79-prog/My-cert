@@ -69,10 +69,10 @@ def generate_certificate(full_name: str, cert_number: str) -> bytes:
 
     # Шрифт с поддержкой кириллицы
     c.setFont("DejaVuSans", 20)
-    c.drawCentredString(width / 2, 880, dative)
+    c.drawCentredString(width / 2, 434, dative)
 
     c.setFont("DejaVuSans", 18)
-    c.drawCentredString(width / 2, 426, f"№ {cert_number}")
+    c.drawCentredString(width / 2, 571, f"№ {cert_number}")
 
     c.save()
     buffer.seek(0)

@@ -18,9 +18,9 @@ from certificate_generator import generate_certificate
 # ======================
 # НАСТРОЙКИ (вставь свои позже)
 # ======================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8568411350:AAFqi-q5VcVZLXdvzFLZE8nzmoHTrfCFDXw")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "") # будет изменён в Railway
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_prodamos_secret_here")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_prodamos_secret_here") # позже укажешь свой
 BASE_URL = os.getenv("BASE_URL", "https://my-cert-bot.up.railway.app")  # будет изменён в Railway
 PRODAMUS_OFFER_ID = os.getenv("PRODAMUS_OFFER_ID", "12345")  # позже укажешь свой
 

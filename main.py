@@ -18,7 +18,7 @@ from certificate_generator import generate_certificate
 # ======================
 # НАСТРОЙКИ (вставь свои позже)
 # ======================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "") # будет изменён в Railway
+BOT_TOKEN = os.getenv("BOT_TOKEN", "") # будет добавлен
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_prodamos_secret_here") # позже укажешь свой
 # Render автоматически предоставляет RENDER_EXTERNAL_HOSTNAME

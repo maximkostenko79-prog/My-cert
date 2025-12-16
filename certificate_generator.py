@@ -2,28 +2,36 @@ import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import Color
 import io
 
+# Регистрируем шрифт с поддержкой кириллицы
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.fonts import addMapping
+
+# DejaVuSans — встроен в reportlab и поддерживает кириллицу
+pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
+
 def generate_certificate(full_name: str, cert_number: str) -> bytes:
     """
-    Генерирует PDF-сертификат, подставляя:
-    - Имя и фамилию в дательном падеже под "Выдан:"
-    - Номер сертификата под "Номер:"
-    Сумма уже есть в шаблоне — не добавляем.
+    Подставляет:
+    - Имя и фамилию в дательном падеже (позиция y=880)
+    - Номер сертификата (позиция y=426)
     """
     buffer = io.BytesIO()
     width, height = A4  # 595 x 842 pt
 
     c = canvas.Canvas(buffer, pagesize=A4)
 
-    # Загружаем фон из шаблона
+    # Фон
     template_path = "sertif.png"
     if os.path.exists(template_path):
         img = ImageReader(template_path)
         img_width, img_height = img.getSize()
 
-        # Сохраняем пропорции фона
         aspect_ratio = img_width / img_height
         target_width = width
         target_height = target_width / aspect_ratio
@@ -35,15 +43,13 @@ def generate_certificate(full_name: str, cert_number: str) -> bytes:
         y_offset = (height - target_height) / 2
         c.drawImage(img, 0, y_offset, width=target_width, height=target_height)
     else:
-        # Резервный фон
         c.setFillColor(Color(0.1, 0.1, 0.3))
         c.rect(0, 0, width, height, fill=1)
 
-    # Белый цвет текста
+    # Белый текст
     c.setFillColor(Color(1, 1, 1))
-    c.setFont("Helvetica", 18)
 
-    # Простое склонение в дательный падеж
+    # Склонение в дательный падеж
     parts = full_name.strip().split()
     if len(parts) >= 2:
         first, last = parts[0], parts[1]
@@ -61,16 +67,12 @@ def generate_certificate(full_name: str, cert_number: str) -> bytes:
     else:
         dative = full_name
 
-    # Позиции (в pt) — подстроены под ваш шаблон
-    # Ширина страницы: 595 pt
-    # Высота страницы: 842 pt
-    # Под «Выдан:» → примерно 500 pt от верха
-    name_y = 500  # ← снизу — выше значение, вверх — ниже
-    number_y = 300  # ← для «Номер:»
+    # Шрифт с поддержкой кириллицы
+    c.setFont("DejaVuSans", 20)
+    c.drawCentredString(width / 2, 880, dative)
 
-    # Горизонтальное выравнивание — по центру
-    c.drawCentredString(width / 2, name_y, dative)
-    c.drawCentredString(width / 2, number_y, f"№ {cert_number}")
+    c.setFont("DejaVuSans", 18)
+    c.drawCentredString(width / 2, 426, f"№ {cert_number}")
 
     c.save()
     buffer.seek(0)

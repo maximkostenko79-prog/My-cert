@@ -14,7 +14,7 @@ def generate_certificate(full_name: str, cert_number: str) -> bytes:
     """
     Генерирует PDF-сертификат:
     - Имя и фамилия (в именительном падеже) → y=410
-    - Номер сертификата → y=273
+    - Номер сертификата → y=272
     Сумма уже в шаблоне — не добавляем.
     """
     buffer = io.BytesIO()
@@ -51,7 +51,7 @@ def generate_certificate(full_name: str, cert_number: str) -> bytes:
     c.drawCentredString(width / 2, 410, full_name.strip())
 
     c.setFont("DejaVuSans", 18)
-    c.drawCentredString(width / 2, 273, f"№ {cert_number}")
+    c.drawCentredString(width / 2, 272, f"№ {cert_number}")
 
     c.save()
     buffer.seek(0)

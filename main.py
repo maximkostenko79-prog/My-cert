@@ -21,7 +21,13 @@ from certificate_generator import generate_certificate
 BOT_TOKEN = os.getenv("BOT_TOKEN", "") # будет изменён в Railway
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_prodamos_secret_here") # позже укажешь свой
-BASE_URL = os.getenv("BASE_URL", "https://my-cert-bot.up.railway.app")  # будет изменён в Railway
+# Render автоматически предоставляет RENDER_EXTERNAL_HOSTNAME
+BASE_URL = os.getenv("RENDER_EXTERNAL_HOSTNAME", "")
+if BASE_URL:
+    BASE_URL = f"https://{BASE_URL}"
+else:
+    # Для локального запуска или fallback
+    BASE_URL = "http://localhost:8000"
 PRODAMUS_OFFER_ID = os.getenv("PRODAMUS_OFFER_ID", "12345")  # позже укажешь свой
 
 # ======================

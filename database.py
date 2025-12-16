@@ -1,3 +1,4 @@
+# database.py
 import aiosqlite
 import os
 
@@ -8,8 +9,9 @@ async def init_db():
         return
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS certificates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
                 full_name TEXT NOT NULL,
                 amount INTEGER NOT NULL,
                 cert_number TEXT,
@@ -26,42 +28,64 @@ async def init_db():
         await db.execute("INSERT OR IGNORE INTO counter (id, last_number) VALUES (1, 0)")
         await db.commit()
 
-async def save_user(user_id: int, full_name: str, amount: int):
+async def create_certificate_request(user_id: int, full_name: str, amount: int) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO users (user_id, full_name, amount) VALUES (?, ?, ?)",
+        cursor = await db.execute(
+            "INSERT INTO certificates (user_id, full_name, amount) VALUES (?, ?, ?)",
             (user_id, full_name, amount)
         )
+        cert_id = cursor.lastrowid
         await db.commit()
+        return cert_id
 
-async def get_user(user_id: int):
+async def get_unpaid_cert_for_user(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute(
+            "SELECT * FROM certificates WHERE user_id = ? AND paid = FALSE ORDER BY created_at DESC LIMIT 1",
+            (user_id,)
+        ) as cursor:
             row = await cursor.fetchone()
             if row:
                 return {
-                    "user_id": row[0],
-                    "full_name": row[1],
-                    "amount": row[2],
-                    "cert_number": row[3],
-                    "paid": bool(row[4])
+                    "id": row[0],
+                    "user_id": row[1],
+                    "full_name": row[2],
+                    "amount": row[3],
+                    "cert_number": row[4],
+                    "paid": bool(row[5])
                 }
     return None
 
-async def issue_certificate_number(user_id: int) -> str:
+async def get_cert_by_id(cert_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        # Получаем текущий последний номер
+        async with db.execute("SELECT * FROM certificates WHERE id = ?", (cert_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and not row[5]:  # paid = False
+                return {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "full_name": row[2],
+                    "amount": row[3],
+                    "cert_number": row[4],
+                    "paid": bool(row[5])
+                }
+    return None
+
+async def issue_certificate_number(cert_id: int) -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Получаем последний номер
         async with db.execute("SELECT last_number FROM counter WHERE id = 1") as cursor:
             result = await cursor.fetchone()
             last_num = result[0] if result else 0
         new_num = last_num + 1
-        cert_str = f"{new_num:04d}"  # 1 → '0001'
-        # Обновляем номер у пользователя
+        cert_str = f"{new_num:04d}"
+
+        # Обновляем запись
         await db.execute(
-            "UPDATE users SET cert_number = ?, paid = TRUE WHERE user_id = ?",
-            (cert_str, user_id)
+            "UPDATE certificates SET cert_number = ?, paid = TRUE WHERE id = ?",
+            (cert_str, cert_id)
         )
-        # Сохраняем новый последний номер
+        # Обновляем счётчик
         await db.execute("UPDATE counter SET last_number = ? WHERE id = 1", (new_num,))
         await db.commit()
         return cert_str

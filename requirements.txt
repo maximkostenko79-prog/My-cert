@@ -5,3 +5,4 @@ reportlab==4.2.0
 aiofiles==23.2.1
 python-multipart==0.0.9
 pydantic==2.5.3
+aiosqlite==0.20.0

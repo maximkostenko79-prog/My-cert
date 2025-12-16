@@ -144,6 +144,25 @@ async def on_shutdown():
 # Запуск
 # ======================
 if __name__ == "__main__":
+    @router.message(Command("testcert"))
+async def test_certificate(message: Message):
+    user_id = message.from_user.id
+    full_name = "Максим Костенко"  # ← замени на своё имя/фамилию для теста
+
+    # Сохраняем как будто пользователь прошёл ввод
+    await save_user(user_id, full_name, 2000)
+
+    # Выдаем сертификат немедленно
+    cert_number = await issue_certificate_number(user_id)
+    pdf_bytes = generate_certificate(full_name, cert_number)
+
+    filename = f"cert_{cert_number}.pdf"
+    async with aiofiles.open(filename, "wb") as f:
+        await f.write(pdf_bytes)
+
+    await message.answer("✅ Тестовый сертификат сгенерирован!")
+    await bot.send_document(user_id, FSInputFile(filename))
+    os.remove(filename)
     logging.basicConfig(level=logging.INFO)
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

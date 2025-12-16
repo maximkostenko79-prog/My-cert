@@ -99,11 +99,18 @@ async def process_amount(message: Message, state: FSMContext):
     await state.clear()
 
 # ======================
-# Webhook от Продамуса (пока отключён, но подготовлен)
+# Webhooks
 # ======================
-@app.post(WEBHOOK_PATH)
+# Обработчик для Telegram
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    update = await request.json()
+    await dp.feed_raw_update(bot, update)
+    return {"ok": True}
+
+# Обработчик для Продамуса (пусть будет отдельный путь)
+@app.post("/prodamus-webhook")
 async def prodamus_webhook(request: Request):
-    # Позже сюда добавим проверку подписи и выдачу сертификата
     body = await request.json()
     client_id = body.get("client_id")
     if not client_id:
@@ -114,19 +121,14 @@ async def prodamus_webhook(request: Request):
     if not user or user["paid"]:
         return Response(status_code=200)
 
-    # Выдаём номер и генерируем PDF
     cert_number = await issue_certificate_number(user_id)
     pdf_bytes = generate_certificate(user["full_name"], user["amount"], cert_number)
 
-    # Сохраняем PDF во временный файл
     filename = f"cert_{cert_number}.pdf"
     async with aiofiles.open(filename, "wb") as f:
         await f.write(pdf_bytes)
 
-    # Отправляем пользователю
     await bot.send_document(user_id, FSInputFile(filename))
-
-    # Удаляем файл
     os.remove(filename)
 
     return JSONResponse({"status": "ok"})

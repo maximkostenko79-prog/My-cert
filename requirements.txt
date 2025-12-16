@@ -1,6 +1,7 @@
-aiogram==3.7.0
-fastapi==0.111.0
-uvicorn==0.29.0
+aiogram==3.6.0
+fastapi==0.104.1
+uvicorn==0.24.0
 reportlab==4.2.0
 aiofiles==23.2.1
 python-multipart==0.0.9
+pydantic==2.5.3

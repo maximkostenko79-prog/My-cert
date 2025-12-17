@@ -1,58 +1,45 @@
+# certificate_generator.py
 import os
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.colors import Color
+from PIL import Image, ImageDraw, ImageFont
 import io
 
-# Регистрируем шрифт с поддержкой кириллицы
-pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
-
-def generate_certificate(full_name: str, cert_number: str) -> bytes:
-    """
-    Генерирует PDF-сертификат:
-    - Имя и фамилия (в именительном падеже) → y=410
-    - Номер сертификата → y=272
-    Сумма уже в шаблоне — не добавляем.
-    """
-    buffer = io.BytesIO()
-    width, height = A4  # 595 x 842 pt
-
-    c = canvas.Canvas(buffer, pagesize=A4)
-
-    # Фон из шаблона
+def generate_certificate_image(full_name: str, cert_number: str) -> bytes:
     template_path = "sertif.png"
-    if os.path.exists(template_path):
-        img = ImageReader(template_path)
-        img_width, img_height = img.getSize()
+    if not os.path.exists(template_path):
+        raise FileNotFoundError("Файл шаблона 'sertif.png' не найден")
 
-        aspect_ratio = img_width / img_height
-        target_width = width
-        target_height = target_width / aspect_ratio
+    base = Image.open(template_path).convert("RGBA")
+    width, height = base.size
 
-        if target_height > height:
-            target_height = height
-            target_width = target_height * aspect_ratio
+    txt_layer = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(txt_layer)
 
-        y_offset = (height - target_height) / 2
-        c.drawImage(img, 0, y_offset, width=target_width, height=target_height)
-    else:
-        # Резервный фон
-        c.setFillColor(Color(0.1, 0.1, 0.3))
-        c.rect(0, 0, width, height, fill=1)
+    # Пытаемся использовать системный шрифт с кириллицей
+    try:
+        # DejaVuSans часто доступен в Linux-образах
+        font_large = ImageFont.truetype("DejaVuSans.ttf", 40)
+        font_small = ImageFont.truetype("DejaVuSans.ttf", 30)
+    except OSError:
+        try:
+            # Альтернатива: LiberationSans
+            font_large = ImageFont.truetype("LiberationSans-Regular.ttf", 40)
+            font_small = ImageFont.truetype("LiberationSans-Regular.ttf", 30)
+        except OSError:
+            # Fallback: без файла (может не поддерживать кириллицу)
+            font_large = ImageFont.load_default()
+            font_small = ImageFont.load_default()
 
-    # Белый текст
-    c.setFillColor(Color(1, 1, 1))
+    text_color = (255, 255, 255, 255)  # белый, непрозрачный
 
-    # Шрифт DejaVuSans — поддерживает кириллицу
-    c.setFont("DejaVuSans", 20)
-    c.drawCentredString(width / 2, 410, full_name.strip())
+    # Позиции в пикселях (точно как в шаблоне)
+    name_pos = (width // 2, 422)
+    number_pos = (width // 2, 704)
 
-    c.setFont("DejaVuSans", 18)
-    c.drawCentredString(width / 2, 272, f"№ {cert_number}")
+    draw.text(name_pos, full_name.strip(), fill=text_color, font=font_large, anchor="mm")
+    draw.text(number_pos, f"№ {cert_number}", fill=text_color, font=font_small, anchor="mm")
 
-    c.save()
+    result = Image.alpha_composite(base, txt_layer)
+    buffer = io.BytesIO()
+    result.convert("RGB").save(buffer, format="PNG")
     buffer.seek(0)
     return buffer.read()

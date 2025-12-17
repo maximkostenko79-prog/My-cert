@@ -32,8 +32,8 @@ def generate_certificate_image(full_name: str, cert_number: str) -> bytes:
     text_color = (255, 255, 255, 255)  # белый, непрозрачный
 
     # Позиции в пикселях (точно как в шаблоне)
-    name_pos = (width // 2, 422)
-    number_pos = (width // 2, 704)
+    name_pos = (width // 2, 412)
+    number_pos = (width // 2, 690)
 
     draw.text(name_pos, full_name.strip(), fill=text_color, font=font_large, anchor="mm")
     draw.text(number_pos, f"№ {cert_number}", fill=text_color, font=font_small, anchor="mm")

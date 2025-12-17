@@ -89,15 +89,15 @@ async def test_certificate(message: Message):
     full_name = "Максим Костенко"
     cert_id = await create_certificate_request(user_id, full_name, 2000)
     cert_number = await issue_certificate_number(cert_id)
-    pdf_bytes = generate_certificate(full_name, cert_number)
+    png_bytes = generate_certificate_image(full_name, cert_number)
 
-    filename = f"cert_{cert_number}.pdf"
-    async with aiofiles.open(filename, "wb") as f:
-        await f.write(pdf_bytes)
+    from aiogram.types import BufferedInputFile
 
     await message.answer("✅ Тестовый сертификат готов!")
-    await bot.send_document(user_id, FSInputFile(filename))
-    os.remove(filename)
+    await bot.send_photo(
+    user_id,
+    BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
+)
 
 # ======================
 # Команда для просмотра базы
@@ -150,14 +150,15 @@ async def prodamus_webhook(request: Request):
         return Response(status_code=404)
 
     cert_number = await issue_certificate_number(cert["id"])
-    pdf_bytes = generate_certificate(cert["full_name"], cert_number)
+    png_bytes = generate_certificate_image(cert["full_name"], cert_number)
 
-    filename = f"cert_{cert_number}.pdf"
-    async with aiofiles.open(filename, "wb") as f:
-        await f.write(pdf_bytes)
+    from aiogram.types import BufferedInputFile
+    await bot.send_photo(
+    cert["user_id"],
+    BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
+)
 
-    await bot.send_document(cert["user_id"], FSInputFile(filename))
-    os.remove(filename)
+   
 
     return JSONResponse({"status": "ok"})
 

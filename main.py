@@ -103,7 +103,7 @@ async def test_certificate(message: Message):
 @router.message(Command("listusers"))
 async def list_users(message: Message):
     # 🔐 ЗАМЕНИ НА СВОЙ USER ID
-    if message.from_user.id != 8568411350:
+    if message.from_user.id != 848953415:
         await message.answer("❌ Доступ запрещён")
         return
 

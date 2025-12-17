@@ -3,7 +3,7 @@ import os
 import logging
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, BufferedInputFile
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -12,10 +12,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 import uvicorn
 import asyncio
-import aiofiles
+import aiosqlite
 
 from database import init_db, create_certificate_request, get_cert_by_id, issue_certificate_number
-from certificate_generator import generate_certificate
+from certificate_generator import generate_certificate_image
 
 # ======================
 # НАСТРОЙКИ
@@ -81,30 +81,29 @@ async def process_name(message: Message, state: FSMContext):
     await state.clear()
 
 # ======================
-# Тестовая команда (мгновенная выдача)
+# Тестовая команда
 # ======================
 @router.message(Command("testcert"))
 async def test_certificate(message: Message):
     user_id = message.from_user.id
-    full_name = "Максим Костенко"
+    full_name = "Максим Костенко"  # ← замени на своё имя для теста
     cert_id = await create_certificate_request(user_id, full_name, 2000)
     cert_number = await issue_certificate_number(cert_id)
     png_bytes = generate_certificate_image(full_name, cert_number)
 
-    from aiogram.types import BufferedInputFile
-
     await message.answer("✅ Тестовый сертификат готов!")
     await bot.send_photo(
-    user_id,
-    BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
-)
+        user_id,
+        BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
+    )
 
 # ======================
-# Команда для просмотра базы
+# Просмотр всех сертификатов
 # ======================
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    if message.from_user.id != 8568411350:  # ← ЗАМЕНИ НА СВОЙ USER ID
+    # 🔐 ЗАМЕНИ НА СВОЙ USER ID
+    if message.from_user.id != 8568411350:
         await message.answer("❌ Доступ запрещён")
         return
 
@@ -152,13 +151,10 @@ async def prodamus_webhook(request: Request):
     cert_number = await issue_certificate_number(cert["id"])
     png_bytes = generate_certificate_image(cert["full_name"], cert_number)
 
-    from aiogram.types import BufferedInputFile
     await bot.send_photo(
-    cert["user_id"],
-    BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
-)
-
-   
+        cert["user_id"],
+        BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
+    )
 
     return JSONResponse({"status": "ok"})
 

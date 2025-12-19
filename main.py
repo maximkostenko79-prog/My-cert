@@ -123,23 +123,15 @@ async def list_users(message: Message):
 # ======================
 # Webhooks
 # ======================
-@app.post(TELEGRAM_WEBHOOK_PATH)
-async def telegram_webhook(request: Request):
-    update = await request.json()
-    await dp.feed_update(bot, Update(**update))
-    return {"ok": True}
-
-# 🔑 Ключевое исправление: принимаем form-data через Form(...)
 @app.post(PRODAMUS_WEBHOOK_PATH)
-async def prodamus_webhook(
-    customer_extra: str = Form(...)
-):
-    logging.info(f"📥 Получен webhook от Продамуса: customer_extra={customer_extra}")
+async def prodamus_webhook(customer_extra: str = Form(...)):
+    logging.info(f"📥 Получен webhook от Продамуса: customer_extra='{customer_extra}' (тип: {type(customer_extra).__name__})")
 
+    # Попробуем преобразовать в int
     try:
         cert_id = int(customer_extra)
     except ValueError:
-        logging.warning("⚠️ customer_extra не число")
+        logging.warning(f"⚠️ Невозможно преобразовать '{customer_extra}' в число")
         return Response(status_code=400)
 
     cert = await get_cert_by_id(cert_id)

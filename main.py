@@ -1,6 +1,7 @@
-# main.py
 import os
 import logging
+import asyncio
+import aiosqlite
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
@@ -11,29 +12,33 @@ from aiogram.types import Update
 from fastapi import FastAPI, Request, Response, Form
 from fastapi.responses import JSONResponse
 import uvicorn
-import asyncio
-import aiosqlite
 
-# Импорты ваших модулей
+# Импорты ваших вспомогательных модулей
+# Убедитесь, что файлы database.py и certificate_generator.py находятся в той же папке
 from database import init_db, create_certificate_request, get_cert_by_id, issue_certificate_number
 from certificate_generator import generate_certificate_image
 
 # ======================
 # Настройки
 # ======================
+# Токен телеграм бота
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is required!")
+    raise ValueError("BOT_TOKEN is required! Укажите его в .env или переменных окружения")
 
+# Секретный ключ Продамуса (для проверки подписи в будущем, если понадобится)
+PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
+
+# Пути для вебхуков
 TELEGRAM_WEBHOOK_PATH = "/webhook"
 PRODAMUS_WEBHOOK_PATH = "/prodamus-webhook"
 
-# Определяем URL хоста
+# Определение адреса хоста (автоматически для Render или localhost)
 render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 BASE_URL = f"https://{render_host}" if render_host else "http://localhost:8000"
 
 # ======================
-# FSM States
+# FSM (Машина состояний)
 # ======================
 class UserStates(StatesGroup):
     waiting_for_name = State()
@@ -50,29 +55,38 @@ dp.include_router(router)
 app = FastAPI()
 
 # ======================
-# Telegram Handlers
+# Telegram Handlers (Логика бота)
 # ======================
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    await message.answer("👋 Привет! Введите имя и фамилию получателя сертификата:")
+    """Начало диалога"""
+    await message.answer("👋 Привет! Введите имя и фамилию для сертификата:")
     await state.set_state(UserStates.waiting_for_name)
 
 @router.message(UserStates.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
+    """Обработка имени и генерация ссылки на оплату"""
     full_name = message.text.strip()
     if len(full_name) < 2:
-        await message.answer("Имя слишком короткое. Попробуйте снова:")
+        await message.answer("Слишком короткое имя. Попробуйте снова:")
         return
 
     user_id = message.from_user.id
+    
+    # 1. Создаем заявку в БД
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    # 🔥 ИСПРАВЛЕНО: убраны пробелы
-    pay_link = f"https://payform.ru/jga8Qsz/?customer_extra={cert_id}&demo_mode=1" 
-    # =======================
+    # 2. Формируем ссылку для Продамуса
+    # ВАЖНО: 
+    # order_id={cert_id} -> вернется в вебхуке как order_num (основной ID)
+    # sys={cert_id}      -> вернется в вебхуке как sys (резервный способ)
+    # demo_mode=1        -> тестовый режим (уберите для боевых платежей!)
+    pay_link = f"https://payform.ru/jga8Qsz/?order_id={cert_id}&sys={cert_id}&demo_mode=1"
 
     await message.answer(
-        f"Сертификат для {full_name} создан (ID: {cert_id}).\nНажмите для оплаты:",
+        f"Заказ №{cert_id} создан для {full_name}.\n"
+        "Для получения сертификата оплатите заказ:",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text="💳 Оплатить 2000 ₽", url=pay_link)]
@@ -82,141 +96,145 @@ async def process_name(message: Message, state: FSMContext):
     await state.clear()
 
 # ======================
-# Тестовая команда
-# ======================
-@router.message(Command("testcert"))
-async def test_certificate(message: Message):
-    user_id = message.from_user.id
-    full_name = "Тестовый Покупатель"
-    cert_id = await create_certificate_request(user_id, full_name, 2000)
-    cert_number = await issue_certificate_number(cert_id)
-    png_bytes = generate_certificate_image(full_name, cert_number)
-
-    await message.answer("✅ Тестовый сертификат готов!")
-    await bot.send_photo(
-        user_id,
-        BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
-    )
-
-# ======================
-# Просмотр базы (только для админа)
+# Тестовые команды (Админка)
 # ======================
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    ADMIN_ID = 8568411350  # ← ЗАМЕНИТЕ НА СВОЙ TELEGRAM ID
-    
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Доступ запрещён")
+    # Укажите здесь свой Telegram ID для безопасности
+    if message.from_user.id != 8568411350: 
+        await message.answer("❌ Нет доступа")
         return
 
-    try:
-        async with aiosqlite.connect("users.db") as db:
-            async with db.execute("SELECT id, user_id, full_name, cert_number, paid FROM certificates ORDER BY id DESC LIMIT 10") as cursor:
+    async with aiosqlite.connect("users.db") as db:
+        try:
+            async with db.execute("SELECT id, full_name, paid FROM certificates ORDER BY id DESC LIMIT 5") as cursor:
                 rows = await cursor.fetchall()
-    except Exception as e:
-        await message.answer(f"Ошибка БД: {e}")
-        return
+        except Exception:
+            await message.answer("База данных пуста или ошибка.")
+            return
 
-    if not rows:
-        await message.answer("База данных пуста.")
-        return
-
-    text = "📋 Последние 10 заявок:\n\n"
+    text = "📋 Последние заявки:\n"
     for row in rows:
-        cert_id, user_id, name, cert, paid = row
-        status = "✅ ОПЛАЧЕНО" if paid else "⏳ Ждет оплаты"
-        cert_num_str = cert if cert else "—"
-        text += f"ID: {cert_id} | {status}\n👤 {name}\n📄 №: {cert_num_str}\n\n"
-
+        cid, name, paid = row
+        status = "✅" if paid else "❌"
+        text += f"ID: {cid} | {status} | {name}\n"
     await message.answer(text)
 
 # ======================
-# Webhooks
+# WEBHOOKS (Самое важное)
 # ======================
+
+# 1. Вебхук Telegram
 @app.post(TELEGRAM_WEBHOOK_PATH)
 async def telegram_webhook(request: Request):
     try:
         update = await request.json()
         await dp.feed_update(bot, Update(**update))
     except Exception as e:
-        logging.error(f"Ошибка в Telegram webhook: {e}")
+        logging.error(f"Telegram webhook error: {e}")
     return {"ok": True}
 
-# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Теперь мы будем искать ID во всех возможных полях, чтобы наверняка поймать его. И добавим подробный лог всего, что пришло.
+# 2. Вебхук Prodamus
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(request: Request):
-    # 1. Читаем данные формы
+    """Обработчик уведомлений об оплате"""
+    
+    # Считываем данные формы
     form_data = await request.form()
     data = dict(form_data)
     
-    # ЛОГИРУЕМ ВСЁ, ЧТО ПРИШЛО (Обязательно посмотрите этот лог после оплаты)
-    logging.info(f"📥 RAW DATA от Продамуса: {data}")
+    # Логируем входящие данные (для отладки)
+    logging.info(f"📥 PRODAMUS DATA: {data}")
 
-    # 2. Пытаемся найти ID в порядке приоритета
-    # Сначала смотрим customer_extra (куда мы теперь пишем ID)
-    # Потом sys, потом order_num
-    raw_id = data.get("customer_extra") or data.get("sys") or data.get("order_num")
-    
-    # Для теста связи
-    if raw_id in ["test", "тест"] or data.get("order_num") == "test":
-        logging.info("✅ Тест связи OK")
+    # --- Шаг 1: Проверка статуса оплаты ---
+    # Нас интересует только success.
+    # Если статус order_canceled, order_denied и т.д. - игнорируем.
+    payment_status = data.get("payment_status", "").lower()
+    if payment_status != "success":
+        logging.info(f"ℹ️ Статус оплаты '{payment_status}'. Пропускаем.")
+        return JSONResponse({"status": "ok", "message": "Ignored non-success status"})
+
+    # --- Шаг 2: Поиск ID заказа ---
+    # Продамус может прислать ID в order_num или sys
+    order_val = data.get("order_num") or data.get("sys")
+
+    # Обработка тестовых запросов "Проверить URL" из админки Продамуса
+    if order_val in ["test", "тест"] or data.get("test") == "1":
+        logging.info("✅ Получен тестовый запрос от Продамуса.")
         return JSONResponse({"status": "ok"})
 
-    if not raw_id:
-        logging.warning("⚠️ ID не найден ни в customer_extra, ни в sys, ни в order_num!")
+    if not order_val:
+        logging.warning("⚠️ Не удалось найти ID заказа в запросе")
         return JSONResponse({"status": "error", "message": "No ID found"})
 
-    # 3. Валидация и выдача
+    # --- Шаг 3: Обработка заказа ---
     try:
-        cert_id = int(raw_id)
+        cert_id = int(order_val)
     except ValueError:
-        logging.warning(f"⚠️ Значение '{raw_id}' не число")
-        return JSONResponse({"status": "error", "message": "Invalid ID"})
+        logging.warning(f"⚠️ ID '{order_val}' не является числом")
+        return JSONResponse({"status": "error", "message": "Invalid ID format"})
 
+    # Ищем в базе
     cert = await get_cert_by_id(cert_id)
     if not cert:
-        logging.warning(f"⚠️ Сертификат {cert_id} не найден в базе")
-        return JSONResponse({"status": "error", "message": "Not found"})
+        logging.warning(f"⚠️ Сертификат с ID {cert_id} не найден в БД")
+        # Возвращаем OK, чтобы Продамус не пытался слать этот запрос вечно
+        return JSONResponse({"status": "ok", "message": "Certificate not found"})
 
+    # Если уже оплачен, не высылаем повторно
+    if cert.get("paid"):
+        logging.info(f"ℹ️ Сертификат {cert_id} уже был выдан ранее.")
+        return JSONResponse({"status": "ok"})
+
+    # --- Шаг 4: Выдача сертификата ---
     try:
+        # 1. Присваиваем номер и ставим статус "оплачено" в БД
         cert_number = await issue_certificate_number(cert["id"])
+        
+        # 2. Генерируем картинку
         png_bytes = generate_certificate_image(cert["full_name"], cert_number)
         
+        # 3. Отправляем в Telegram пользователю
         await bot.send_photo(
             cert["user_id"],
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
-            caption=f"🎉 Оплата успешна! Ваш сертификат № {cert_number}."
+            caption=f"🎉 Поздравляем! Оплата прошла успешно.\nВаш сертификат № {cert_number} готов."
         )
-        logging.info(f"✅ УСПЕХ! Сертификат №{cert_number} выдан.")
+        
+        logging.info(f"✅ УСПЕХ: Сертификат №{cert_number} выдан пользователю {cert['user_id']}")
         return JSONResponse({"status": "ok"})
+
     except Exception as e:
-        logging.error(f"❌ Ошибка выдачи: {e}")
+        logging.error(f"❌ ОШИБКА при выдаче сертификата: {e}")
+        # Если ошибка на нашей стороне (например, Telegram лежит), 
+        # возвращаем 500, чтобы Продамус попробовал позже
         return Response(status_code=500)
 
-
-
-
+# Заглушка для GET (если открыть ссылку в браузере)
 @app.get(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook_get():
-    return {"status": "ok", "message": "Use POST"}
+    return {"status": "ok", "message": "Use POST method"}
 
 # ======================
-# Startup / Shutdown
+# Запуск приложения
 # ======================
 @app.on_event("startup")
 async def on_startup():
     await init_db()
+    
+    # Установка вебхука Telegram
     webhook_url = f"{BASE_URL}{TELEGRAM_WEBHOOK_PATH}"
     await bot.set_webhook(url=webhook_url)
-    logging.info(f"🚀 Бот запущен. Webhook: {webhook_url}")
+    
+    logging.info("🚀 Сервер запущен")
+    logging.info(f"🔗 Telegram Webhook: {webhook_url}")
+    logging.info(f"🔗 Prodamus URL: {BASE_URL}{PRODAMUS_WEBHOOK_PATH}")
 
 @app.on_event("shutdown")
 async def on_shutdown():
     await bot.delete_webhook()
+    await bot.session.close()
 
-# ======================
-# Запуск
-# ======================
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     port = int(os.getenv("PORT", 10000))

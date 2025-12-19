@@ -113,4 +113,78 @@ async def list_users(message: Message):
         return
 
     async with aiosqlite.connect("users.db") as db:
-        async with db.
+        async with db.execute("SELECT id, user_id, full_name, cert_number, paid FROM certificates") as cursor:
+            rows = await cursor.fetchall()
+
+    if not rows:
+        await message.answer("База данных пуста.")
+        return
+
+    text = "📋 Сертификаты:\n\n"
+    for row in rows:
+        cert_id, user_id, name, cert, paid = row
+        status = "✅" if paid else "⏳"
+        text += f"{status} ID: `{cert_id}`\n   Получатель: {name}\n   №: {cert or '—'}\n\n"
+
+    await message.answer(f"```{text}```", parse_mode="MarkdownV2")
+
+# ======================
+# Webhooks
+# ======================
+@app.post(TELEGRAM_WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    update = await request.json()
+    await dp.feed_update(bot, Update(**update))
+    return {"ok": True}
+
+@app.post(PRODAMUS_WEBHOOK_PATH)
+async def prodamus_webhook(data: ProdamosWebhookData):
+    logging.info(f"📥 Получен webhook от Продамуса: client_id={data.client_id}")
+
+    try:
+        cert_id = int(data.client_id)
+    except ValueError:
+        logging.warning("⚠️ client_id не число")
+        return Response(status_code=400)
+
+    cert = await get_cert_by_id(cert_id)
+    if not cert:
+        logging.warning(f"⚠️ Сертификат {cert_id} не найден или уже оплачен")
+        return Response(status_code=404)
+
+    cert_number = await issue_certificate_number(cert["id"])
+    png_bytes = generate_certificate_image(cert["full_name"], cert_number)
+
+    await bot.send_photo(
+        cert["user_id"],
+        BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
+    )
+
+    logging.info(f"✅ Сертификат №{cert_number} отправлен пользователю {cert['user_id']}")
+    return JSONResponse({"status": "ok"})
+
+@app.get(PRODAMUS_WEBHOOK_PATH)
+async def prodamus_webhook_get():
+    return {"status": "ok", "message": "GET not used"}
+
+# ======================
+# Startup / Shutdown
+# ======================
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    webhook_url = f"{BASE_URL}{TELEGRAM_WEBHOOK_PATH}"
+    await bot.set_webhook(url=webhook_url)
+    logging.info(f"✅ Webhook установлен: {webhook_url}")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await bot.delete_webhook()
+
+# ======================
+# Запуск
+# ======================
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

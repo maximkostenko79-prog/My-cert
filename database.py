@@ -2,11 +2,19 @@
 import aiosqlite
 import os
 
-DB_PATH = "users.db"
+# 🔑 Сохраняем базу на Persistent Disk
+DB_PATH = "/var/data/users.db"
 
 async def init_db():
+    # Создаём директорию, если её нет (для безопасности)
+    db_dir = os.path.dirname(DB_PATH)
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    # Создаём базу, если файла нет
     if os.path.exists(DB_PATH):
         return
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS certificates (
@@ -37,24 +45,6 @@ async def create_certificate_request(user_id: int, full_name: str, amount: int) 
         cert_id = cursor.lastrowid
         await db.commit()
         return cert_id
-
-async def get_unpaid_cert_for_user(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT * FROM certificates WHERE user_id = ? AND paid = FALSE ORDER BY created_at DESC LIMIT 1",
-            (user_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "id": row[0],
-                    "user_id": row[1],
-                    "full_name": row[2],
-                    "amount": row[3],
-                    "cert_number": row[4],
-                    "paid": bool(row[5])
-                }
-    return None
 
 async def get_cert_by_id(cert_id: int):
     async with aiosqlite.connect(DB_PATH) as db:

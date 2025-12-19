@@ -142,49 +142,57 @@ async def telegram_webhook(request: Request):
         logging.error(f"Ошибка в Telegram webhook: {e}")
     return {"ok": True}
 
-# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: order_num теперь опциональный
+# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Нужно сделать поле order_num необязательным и проверить всё тело запроса, чтобы найти правильное название поля
 @app.post(PRODAMUS_WEBHOOK_PATH)
-async def prodamus_webhook(order_num: str = Form(None)):
-    logging.info(f"📥 Получен webhook от Продамуса. order_num='{order_num}'")
+async def prodamus_webhook(request: Request):
+    # 1. Читаем все данные формы "сырыми"
+    form_data = await request.form()
+    data = dict(form_data)
+    
+    # Логируем, чтобы точно увидеть, какие ключи прислал Продамус
+    logging.info(f"📥 RAW DATA от Продамуса: {data}")
 
-    # Проверка наличия order_num
-    if not order_num:
-        logging.warning("⚠️ order_num отсутствует в запросе")
-        return JSONResponse({"status": "error", "message": "order_num is required"}, status_code=400)
+    # 2. Пытаемся найти ID заказа в разных возможных полях
+    # Продамус может слать order_num или order_id
+    order_val = data.get("order_num") or data.get("order_id")
 
-    # Обработка тестового запроса
-    if order_num in ("test", "тест"):
-        logging.info("✅ Тестовый запрос — OK")
-        return JSONResponse({"status": "ok", "message": "Test received"})
+    if not order_val:
+        logging.warning("⚠️ В запросе нет ни order_num, ни order_id!")
+        # Возвращаем 200, чтобы не копить ошибки на стороне Продамуса
+        return JSONResponse({"status": "error", "message": "Missing order identifier"})
 
-    # Валидация ID
+    # 3. Обработка тестового запроса
+    if order_val in ["test", "тест"]:
+        logging.info("✅ Тестовый запрос OK")
+        return JSONResponse({"status": "ok"})
+
+    # 4. Валидация ID
     try:
-        cert_id = int(order_num)
+        cert_id = int(order_val)
     except ValueError:
-        logging.warning(f"⚠️ Неверный order_num: '{order_num}'")
-        return JSONResponse({"status": "error", "message": "Invalid order_num"}, status_code=400)
+        logging.warning(f"⚠️ Значение '{order_val}' не число")
+        return JSONResponse({"status": "error", "message": "Invalid ID format"})
 
-    # Поиск сертификата
+    # 5. Поиск и выдача (как было раньше)
     cert = await get_cert_by_id(cert_id)
     if not cert:
         logging.warning(f"⚠️ Сертификат {cert_id} не найден")
-        return JSONResponse({"status": "error", "message": "Certificate not found"}, status_code=404)
+        return JSONResponse({"status": "error", "message": "Certificate not found"})
 
-    # Выдача сертификата
     try:
         cert_number = await issue_certificate_number(cert["id"])
         png_bytes = generate_certificate_image(cert["full_name"], cert_number)
-
         await bot.send_photo(
             cert["user_id"],
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
-            caption=f"🎉 Поздравляем! Оплата прошла успешно.\nВаш сертификат № {cert_number} готов."
+            caption=f"🎉 Оплата прошла! Ваш сертификат № {cert_number}."
         )
-        logging.info(f"✅ Сертификат №{cert_number} отправлен пользователю {cert['user_id']}")
+        logging.info(f"✅ Сертификат №{cert_number} выдан!")
         return JSONResponse({"status": "ok"})
     except Exception as e:
-        logging.error(f"❌ Критическая ошибка при выдаче сертификата: {e}")
+        logging.error(f"❌ Ошибка выдачи: {e}")
         return Response(status_code=500)
+
 
 @app.get(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook_get():

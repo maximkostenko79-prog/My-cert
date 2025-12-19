@@ -67,7 +67,7 @@ async def process_name(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    pay_link = f"https://ваш-магазин.prodammus.ru/pay?offer_ids[]={PRODAMUS_OFFER_ID}&price=2000&client_id={cert_id}"
+    pay_link = f"https://payform.ru/jga8Qsz/?client_id={cert_id}"
 
     await message.answer(
         "Отлично! Ваш подарочный сертификат готов к оплате.\n\n"

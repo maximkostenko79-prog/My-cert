@@ -68,7 +68,7 @@ async def process_name(message: Message, state: FSMContext):
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
     # 🔥 ИСПРАВЛЕНО: убраны пробелы
-    pay_link = f"https://payform.ru/jga8Qsz/?order_id={cert_id}&demo_mode=1"
+    pay_link = f"https://payform.ru/jga8Qsz/?sys={cert_id}&demo_mode=1"
 
     await message.answer(
         f"Отлично! Сертификат для {full_name} создан.\n"
@@ -142,56 +142,60 @@ async def telegram_webhook(request: Request):
         logging.error(f"Ошибка в Telegram webhook: {e}")
     return {"ok": True}
 
-# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Нужно сделать поле order_num необязательным и проверить всё тело запроса, чтобы найти правильное название поля
+# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Теперь мы должны искать наш ID в поле sys пришедшего вебхука.
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(request: Request):
-    # 1. Читаем все данные формы "сырыми"
+    # 1. Получаем все данные
     form_data = await request.form()
     data = dict(form_data)
     
-    # Логируем, чтобы точно увидеть, какие ключи прислал Продамус
+    # Логируем для отладки
     logging.info(f"📥 RAW DATA от Продамуса: {data}")
 
-    # 2. Пытаемся найти ID заказа в разных возможных полях
-    # Продамус может слать order_num или order_id
-    order_val = data.get("order_num") or data.get("order_id")
+    # 2. Пытаемся достать НАШ ID из поля 'sys'
+    # Если 'sys' пустой, пробуем взять 'order_num' на случай теста "check url"
+    cert_id_str = data.get("sys")
+    order_num_prodamus = data.get("order_num", "unknown")
 
-    if not order_val:
-        logging.warning("⚠️ В запросе нет ни order_num, ни order_id!")
-        # Возвращаем 200, чтобы не копить ошибки на стороне Продамуса
-        return JSONResponse({"status": "error", "message": "Missing order identifier"})
-
-    # 3. Обработка тестового запроса
-    if order_val in ["test", "тест"]:
-        logging.info("✅ Тестовый запрос OK")
+    # Обработка тестового запроса (кнопка "Проверить URL" в админке шлет order_num=test, sys=test)
+    if cert_id_str == "test" or order_num_prodamus == "test":
+        logging.info("✅ Тестовый запрос (Check URL) - OK")
         return JSONResponse({"status": "ok"})
 
-    # 4. Валидация ID
-    try:
-        cert_id = int(order_val)
-    except ValueError:
-        logging.warning(f"⚠️ Значение '{order_val}' не число")
-        return JSONResponse({"status": "error", "message": "Invalid ID format"})
+    if not cert_id_str:
+        logging.warning(f"⚠️ Поле 'sys' пустое! Пришел заказ №{order_num_prodamus}, но мы не знаем ID сертификата.")
+        # Отвечаем 200, чтобы Продамус не спамил
+        return JSONResponse({"status": "error", "message": "Missing 'sys' param"})
 
-    # 5. Поиск и выдача (как было раньше)
+    # 3. Валидация
+    try:
+        cert_id = int(cert_id_str)
+    except ValueError:
+        logging.warning(f"⚠️ Значение sys='{cert_id_str}' не является числом.")
+        return JSONResponse({"status": "error", "message": "Invalid sys format"})
+
+    # 4. Поиск в БД
     cert = await get_cert_by_id(cert_id)
     if not cert:
-        logging.warning(f"⚠️ Сертификат {cert_id} не найден")
+        logging.warning(f"⚠️ Сертификат ID {cert_id} (из поля sys) не найден в БД. Заказ Продамуса: {order_num_prodamus}")
         return JSONResponse({"status": "error", "message": "Certificate not found"})
 
+    # 5. Выдача
     try:
         cert_number = await issue_certificate_number(cert["id"])
         png_bytes = generate_certificate_image(cert["full_name"], cert_number)
+        
         await bot.send_photo(
             cert["user_id"],
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
-            caption=f"🎉 Оплата прошла! Ваш сертификат № {cert_number}."
+            caption=f"🎉 Поздравляем! Оплата прошла успешно.\nВаш сертификат № {cert_number}."
         )
-        logging.info(f"✅ Сертификат №{cert_number} выдан!")
+        logging.info(f"✅ Сертификат №{cert_number} выдан по заказу {order_num_prodamus}!")
         return JSONResponse({"status": "ok"})
     except Exception as e:
         logging.error(f"❌ Ошибка выдачи: {e}")
         return Response(status_code=500)
+
 
 
 @app.get(PRODAMUS_WEBHOOK_PATH)

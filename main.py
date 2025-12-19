@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Update
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Form
 from fastapi.responses import JSONResponse
 import uvicorn
 import asyncio
@@ -24,8 +24,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is required!")
 
-PRODAMUS_OFFER_ID = os.getenv("PRODAMUS_OFFER_ID", "12345")
-
+# ======================
+# Константы
+# ======================
 TELEGRAM_WEBHOOK_PATH = "/webhook"
 PRODAMUS_WEBHOOK_PATH = "/prodamus-webhook"
 
@@ -67,7 +68,8 @@ async def process_name(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    pay_link = f"https://payform.ru/jga8Qsz/?client_id={cert_id}"
+    # 🔑 Используем твою ссылку + demo_mode=1 для тестов
+    pay_link = f"https://payform.ru/jga8Qsz/?client_id={cert_id}&demo_mode=1"
 
     await message.answer(
         "Отлично! Ваш подарочный сертификат готов к оплате.\n\n"
@@ -86,7 +88,7 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(Command("testcert"))
 async def test_certificate(message: Message):
     user_id = message.from_user.id
-    full_name = "Максим Костенко"  # ← замени на своё имя для теста
+    full_name = "Максим Костенко"
     cert_id = await create_certificate_request(user_id, full_name, 2000)
     cert_number = await issue_certificate_number(cert_id)
     png_bytes = generate_certificate_image(full_name, cert_number)
@@ -102,8 +104,7 @@ async def test_certificate(message: Message):
 # ======================
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    # 🔐 ЗАМЕНИ НА СВОЙ USER ID
-    if message.from_user.id != 848953415:
+    if message.from_user.id != 8568411350:  # ← ЗАМЕНИ НА СВОЙ USER ID
         await message.answer("❌ Доступ запрещён")
         return
 
@@ -132,20 +133,20 @@ async def telegram_webhook(request: Request):
     await dp.feed_update(bot, Update(**update))
     return {"ok": True}
 
+# 🔑 Обработка webhook от Продамуса как form-data
 @app.post(PRODAMUS_WEBHOOK_PATH)
-async def prodamus_webhook(request: Request):
-    body = await request.json()
-    client_id = body.get("client_id")
-    if not client_id:
-        return Response(status_code=400)
+async def prodamus_webhook(client_id: str = Form(...)):
+    logging.info(f"📥 Получен webhook от Продамуса: client_id={client_id}")
 
     try:
         cert_id = int(client_id)
     except ValueError:
+        logging.warning("⚠️ client_id не число")
         return Response(status_code=400)
 
     cert = await get_cert_by_id(cert_id)
     if not cert:
+        logging.warning(f"⚠️ Сертификат {cert_id} не найден или уже оплачен")
         return Response(status_code=404)
 
     cert_number = await issue_certificate_number(cert["id"])
@@ -156,7 +157,13 @@ async def prodamus_webhook(request: Request):
         BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png")
     )
 
+    logging.info(f"✅ Сертификат №{cert_number} отправлен пользователю {cert['user_id']}")
     return JSONResponse({"status": "ok"})
+
+# 🔑 Заглушка для GET (если Продамус случайно шлёт GET)
+@app.get(PRODAMUS_WEBHOOK_PATH)
+async def prodamus_webhook_get():
+    return {"status": "ok", "message": "GET not used"}
 
 # ======================
 # Startup

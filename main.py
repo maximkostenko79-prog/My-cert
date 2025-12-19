@@ -8,9 +8,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Update
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Form
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import uvicorn
 import asyncio
 import aiosqlite
@@ -47,12 +46,6 @@ router = Router()
 dp.include_router(router)
 
 app = FastAPI()
-
-# ======================
-# Модель webhook от Продамуса
-# ======================
-class ProdamosWebhookData(BaseModel):
-    customer_extra: str  # ← это значение из ?client_id=123
 
 # ======================
 # Telegram handlers
@@ -136,12 +129,15 @@ async def telegram_webhook(request: Request):
     await dp.feed_update(bot, Update(**update))
     return {"ok": True}
 
+# 🔑 Ключевое исправление: принимаем form-data через Form(...)
 @app.post(PRODAMUS_WEBHOOK_PATH)
-async def prodamus_webhook(data: ProdamosWebhookData):
-    logging.info(f"📥 Получен webhook от Продамуса: customer_extra={data.customer_extra}")
+async def prodamus_webhook(
+    customer_extra: str = Form(...)
+):
+    logging.info(f"📥 Получен webhook от Продамуса: customer_extra={customer_extra}")
 
     try:
-        cert_id = int(data.customer_extra)
+        cert_id = int(customer_extra)
     except ValueError:
         logging.warning("⚠️ customer_extra не число")
         return Response(status_code=400)

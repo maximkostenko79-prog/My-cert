@@ -68,11 +68,11 @@ async def process_name(message: Message, state: FSMContext):
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
     # 🔥 ИСПРАВЛЕНО: убраны пробелы
-    pay_link = f"https://payform.ru/jga8Qsz/?sys={cert_id}&demo_mode=1"
+    pay_link = f"https://payform.ru/jga8Qsz/?customer_extra={cert_id}&demo_mode=1" 
+    # =======================
 
     await message.answer(
-        f"Отлично! Сертификат для {full_name} создан.\n"
-        "Для получения нажмите кнопку оплаты ниже:",
+        f"Сертификат для {full_name} создан (ID: {cert_id}).\nНажмите для оплаты:",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text="💳 Оплатить 2000 ₽", url=pay_link)]
@@ -142,45 +142,42 @@ async def telegram_webhook(request: Request):
         logging.error(f"Ошибка в Telegram webhook: {e}")
     return {"ok": True}
 
-# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Теперь мы должны искать наш ID в поле sys пришедшего вебхука.
+# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Теперь мы будем искать ID во всех возможных полях, чтобы наверняка поймать его. И добавим подробный лог всего, что пришло.
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(request: Request):
-    # 1. Получаем все данные
+    # 1. Читаем данные формы
     form_data = await request.form()
     data = dict(form_data)
     
-    # Логируем для отладки
+    # ЛОГИРУЕМ ВСЁ, ЧТО ПРИШЛО (Обязательно посмотрите этот лог после оплаты)
     logging.info(f"📥 RAW DATA от Продамуса: {data}")
 
-    # 2. Пытаемся достать НАШ ID из поля 'sys'
-    # Если 'sys' пустой, пробуем взять 'order_num' на случай теста "check url"
-    cert_id_str = data.get("sys")
-    order_num_prodamus = data.get("order_num", "unknown")
-
-    # Обработка тестового запроса (кнопка "Проверить URL" в админке шлет order_num=test, sys=test)
-    if cert_id_str == "test" or order_num_prodamus == "test":
-        logging.info("✅ Тестовый запрос (Check URL) - OK")
+    # 2. Пытаемся найти ID в порядке приоритета
+    # Сначала смотрим customer_extra (куда мы теперь пишем ID)
+    # Потом sys, потом order_num
+    raw_id = data.get("customer_extra") or data.get("sys") or data.get("order_num")
+    
+    # Для теста связи
+    if raw_id in ["test", "тест"] or data.get("order_num") == "test":
+        logging.info("✅ Тест связи OK")
         return JSONResponse({"status": "ok"})
 
-    if not cert_id_str:
-        logging.warning(f"⚠️ Поле 'sys' пустое! Пришел заказ №{order_num_prodamus}, но мы не знаем ID сертификата.")
-        # Отвечаем 200, чтобы Продамус не спамил
-        return JSONResponse({"status": "error", "message": "Missing 'sys' param"})
+    if not raw_id:
+        logging.warning("⚠️ ID не найден ни в customer_extra, ни в sys, ни в order_num!")
+        return JSONResponse({"status": "error", "message": "No ID found"})
 
-    # 3. Валидация
+    # 3. Валидация и выдача
     try:
-        cert_id = int(cert_id_str)
+        cert_id = int(raw_id)
     except ValueError:
-        logging.warning(f"⚠️ Значение sys='{cert_id_str}' не является числом.")
-        return JSONResponse({"status": "error", "message": "Invalid sys format"})
+        logging.warning(f"⚠️ Значение '{raw_id}' не число")
+        return JSONResponse({"status": "error", "message": "Invalid ID"})
 
-    # 4. Поиск в БД
     cert = await get_cert_by_id(cert_id)
     if not cert:
-        logging.warning(f"⚠️ Сертификат ID {cert_id} (из поля sys) не найден в БД. Заказ Продамуса: {order_num_prodamus}")
-        return JSONResponse({"status": "error", "message": "Certificate not found"})
+        logging.warning(f"⚠️ Сертификат {cert_id} не найден в базе")
+        return JSONResponse({"status": "error", "message": "Not found"})
 
-    # 5. Выдача
     try:
         cert_number = await issue_certificate_number(cert["id"])
         png_bytes = generate_certificate_image(cert["full_name"], cert_number)
@@ -188,13 +185,14 @@ async def prodamus_webhook(request: Request):
         await bot.send_photo(
             cert["user_id"],
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
-            caption=f"🎉 Поздравляем! Оплата прошла успешно.\nВаш сертификат № {cert_number}."
+            caption=f"🎉 Оплата успешна! Ваш сертификат № {cert_number}."
         )
-        logging.info(f"✅ Сертификат №{cert_number} выдан по заказу {order_num_prodamus}!")
+        logging.info(f"✅ УСПЕХ! Сертификат №{cert_number} выдан.")
         return JSONResponse({"status": "ok"})
     except Exception as e:
         logging.error(f"❌ Ошибка выдачи: {e}")
         return Response(status_code=500)
+
 
 
 

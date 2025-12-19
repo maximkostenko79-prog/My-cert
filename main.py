@@ -49,13 +49,13 @@ dp.include_router(router)
 app = FastAPI()
 
 # ======================
-# Продамус webhook модель
+# Модель webhook от Продамуса
 # ======================
 class ProdamosWebhookData(BaseModel):
-    client_id: str  # передаётся в ссылке как ?client_id=123
+    customer_extra: str  # ← это значение из ?client_id=123
 
 # ======================
-# Обработчики Telegram
+# Telegram handlers
 # ======================
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
@@ -72,7 +72,6 @@ async def process_name(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    # Используем твою ссылку + demo_mode=1
     pay_link = f"https://payform.ru/jga8Qsz/?client_id={cert_id}&demo_mode=1"
 
     await message.answer(
@@ -139,12 +138,12 @@ async def telegram_webhook(request: Request):
 
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(data: ProdamosWebhookData):
-    logging.info(f"📥 Получен webhook от Продамуса: client_id={data.client_id}")
+    logging.info(f"📥 Получен webhook от Продамуса: customer_extra={data.customer_extra}")
 
     try:
-        cert_id = int(data.client_id)
+        cert_id = int(data.customer_extra)
     except ValueError:
-        logging.warning("⚠️ client_id не число")
+        logging.warning("⚠️ customer_extra не число")
         return Response(status_code=400)
 
     cert = await get_cert_by_id(cert_id)

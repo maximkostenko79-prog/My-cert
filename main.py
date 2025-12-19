@@ -27,17 +27,17 @@ if not BOT_TOKEN:
 TELEGRAM_WEBHOOK_PATH = "/webhook"
 PRODAMUS_WEBHOOK_PATH = "/prodamus-webhook"
 
-render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-BASE_URL = f"https://{render_host}" if render_host else "http://localhost:8000"
+# 🔑 ЖЁСТКО УКАЗЫВАЕМ BASE_URL (замените на ваш реальный URL!)
+BASE_URL = "https://my-cert.onrender.com"
 
 # ======================
-# FSM States
+# FSM
 # ======================
 class UserStates(StatesGroup):
     waiting_for_name = State()
 
 # ======================
-# FastAPI + Aiogram
+# Инициализация
 # ======================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -96,17 +96,22 @@ async def test_certificate(message: Message):
     )
 
 # ======================
-# Просмотр базы
+# Просмотр базы (только для вас)
 # ======================
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    if message.from_user.id != 8568411350:  # ← ЗАМЕНИ НА СВОЙ USER ID
+    # 🔐 ЗАМЕНИТЕ НА СВОЙ TELEGRAM USER ID
+    if message.from_user.id != 8568411350:
         await message.answer("❌ Доступ запрещён")
         return
 
-    async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT id, user_id, full_name, cert_number, paid FROM certificates") as cursor:
-            rows = await cursor.fetchall()
+    try:
+        async with aiosqlite.connect("users.db") as db:
+            async with db.execute("SELECT id, user_id, full_name, cert_number, paid FROM certificates") as cursor:
+                rows = await cursor.fetchall()
+    except Exception as e:
+        await message.answer(f"Ошибка базы: {e}")
+        return
 
     if not rows:
         await message.answer("База данных пуста.")
@@ -123,20 +128,35 @@ async def list_users(message: Message):
 # ======================
 # Webhooks
 # ======================
+@app.post(TELEGRAM_WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    try:
+        update = await request.json()
+        await dp.feed_update(bot, Update(**update))
+        return {"ok": True}
+    except Exception as e:
+        logging.error(f"Ошибка Telegram webhook: {e}")
+        return {"ok": False}
+
+# 🔑 ОБРАБОТЧИК PRODAMUS — принимает form data
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(customer_extra: str = Form(...)):
-    logging.info(f"📥 Получен webhook от Продамуса: customer_extra='{customer_extra}' (тип: {type(customer_extra).__name__})")
+    logging.info(f"📥 Продамус: customer_extra = '{customer_extra}'")
 
-    # Попробуем преобразовать в int
+    # Проверка: если это тест — игнорируем
+    if customer_extra == "test":
+        logging.info("ℹ️ Тестовый запрос от Продамуса — пропускаем")
+        return JSONResponse({"status": "ok", "message": "test ignored"})
+
     try:
         cert_id = int(customer_extra)
     except ValueError:
-        logging.warning(f"⚠️ Невозможно преобразовать '{customer_extra}' в число")
+        logging.warning(f"⚠️ '{customer_extra}' не является числом")
         return Response(status_code=400)
 
     cert = await get_cert_by_id(cert_id)
     if not cert:
-        logging.warning(f"⚠️ Сертификат {cert_id} не найден или уже оплачен")
+        logging.warning(f"⚠️ Сертификат {cert_id} не найден")
         return Response(status_code=404)
 
     cert_number = await issue_certificate_number(cert["id"])
@@ -150,9 +170,10 @@ async def prodamus_webhook(customer_extra: str = Form(...)):
     logging.info(f"✅ Сертификат №{cert_number} отправлен пользователю {cert['user_id']}")
     return JSONResponse({"status": "ok"})
 
+# Заглушка для GET (для тестирования в браузере)
 @app.get(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook_get():
-    return {"status": "ok", "message": "GET not used"}
+    return {"status": "ok", "note": "Use POST from Prodamos"}
 
 # ======================
 # Startup / Shutdown
@@ -161,8 +182,11 @@ async def prodamus_webhook_get():
 async def on_startup():
     await init_db()
     webhook_url = f"{BASE_URL}{TELEGRAM_WEBHOOK_PATH}"
-    await bot.set_webhook(url=webhook_url)
-    logging.info(f"✅ Webhook установлен: {webhook_url}")
+    try:
+        await bot.set_webhook(url=webhook_url)
+        logging.info(f"✅ Telegram webhook установлен: {webhook_url}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка установки webhook: {e}")
 
 @app.on_event("shutdown")
 async def on_shutdown():

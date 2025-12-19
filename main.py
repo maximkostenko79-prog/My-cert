@@ -103,7 +103,7 @@ app = FastAPI()
 # ======================
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    await message.answer("👋 Введите Имя и Фамилию для сертификата:")
+    await message.answer("👋 Введите имя и фамилию получателя сертификата:")
     await state.set_state(UserStates.waiting_for_name)
 
 @router.message(UserStates.waiting_for_name)
@@ -132,7 +132,8 @@ async def process_name(message: Message, state: FSMContext):
     pay_link = f"{PRODAMUS_FORM_URL}?{query_string}"
 
     await message.answer(
-        f"Заказ №{cert_id} создан.\n",
+        f"Сертификат создан\n"
+        "Для получения нажмите кнопку оплаты ниже:",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[[types.InlineKeyboardButton(text="💳 Оплатить 2000 ₽", url=pay_link)]]
         )

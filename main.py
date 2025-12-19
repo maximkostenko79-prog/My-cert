@@ -67,7 +67,7 @@ async def process_name(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    # 🔥 ИСПРАВЛЕНО: убраны пробелы вокруг {cert_id}
+    # 🔥 ИСПРАВЛЕНО: убраны пробелы
     pay_link = f"https://payform.ru/jga8Qsz/?order_id={cert_id}&demo_mode=1"
 
     await message.answer(
@@ -103,7 +103,7 @@ async def test_certificate(message: Message):
 # ======================
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    ADMIN_ID = 8568411350  # ← ЗАМЕНИТЕ НА СВОЙ ID
+    ADMIN_ID = 8568411350  # ← ЗАМЕНИТЕ НА СВОЙ TELEGRAM ID
     
     if message.from_user.id != ADMIN_ID:
         await message.answer("❌ Доступ запрещён")
@@ -142,9 +142,15 @@ async def telegram_webhook(request: Request):
         logging.error(f"Ошибка в Telegram webhook: {e}")
     return {"ok": True}
 
+# 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: order_num теперь опциональный
 @app.post(PRODAMUS_WEBHOOK_PATH)
-async def prodamus_webhook(order_num: str = Form(...)):
-    logging.info(f"📥 Получен webhook от Продамуса. order_num={order_num}")
+async def prodamus_webhook(order_num: str = Form(None)):
+    logging.info(f"📥 Получен webhook от Продамуса. order_num='{order_num}'")
+
+    # Проверка наличия order_num
+    if not order_num:
+        logging.warning("⚠️ order_num отсутствует в запросе")
+        return JSONResponse({"status": "error", "message": "order_num is required"}, status_code=400)
 
     # Обработка тестового запроса
     if order_num in ("test", "тест"):
@@ -156,13 +162,13 @@ async def prodamus_webhook(order_num: str = Form(...)):
         cert_id = int(order_num)
     except ValueError:
         logging.warning(f"⚠️ Неверный order_num: '{order_num}'")
-        return JSONResponse({"status": "error", "message": "Invalid order_num"})
+        return JSONResponse({"status": "error", "message": "Invalid order_num"}, status_code=400)
 
     # Поиск сертификата
     cert = await get_cert_by_id(cert_id)
     if not cert:
         logging.warning(f"⚠️ Сертификат {cert_id} не найден")
-        return JSONResponse({"status": "error", "message": "Certificate not found"})
+        return JSONResponse({"status": "error", "message": "Certificate not found"}, status_code=404)
 
     # Выдача сертификата
     try:
@@ -174,10 +180,10 @@ async def prodamus_webhook(order_num: str = Form(...)):
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
             caption=f"🎉 Поздравляем! Оплата прошла успешно.\nВаш сертификат № {cert_number} готов."
         )
-        logging.info(f"✅ Сертификат №{cert_number} отправлен {cert['user_id']}")
+        logging.info(f"✅ Сертификат №{cert_number} отправлен пользователю {cert['user_id']}")
         return JSONResponse({"status": "ok"})
     except Exception as e:
-        logging.error(f"❌ Ошибка выдачи: {e}")
+        logging.error(f"❌ Критическая ошибка при выдаче сертификата: {e}")
         return Response(status_code=500)
 
 @app.get(PRODAMUS_WEBHOOK_PATH)
@@ -197,7 +203,6 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     await bot.delete_webhook()
-    # await bot.session.close()  # ← не нужно в aiogram 3.x
 
 # ======================
 # Запуск

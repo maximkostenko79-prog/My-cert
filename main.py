@@ -121,7 +121,7 @@ async def process_name(message: Message, state: FSMContext):
     pay_link = f"{PRODAMUS_FORM_URL}?{query_string}"
 
     await message.answer(
-        f"Сертификат создан\n"
+        f"Сертификат создан.\n"
         "Для получения нажмите кнопку оплаты ниже:",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[[types.InlineKeyboardButton(text="💳 Оплатить 2000 ₽", url=pay_link)]]
@@ -133,7 +133,7 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(Command("listusers"))
 async def list_users(message: Message):
     # ID Админа (замените, если нужно)
-    if message.from_user.id != 8568411350: 
+    if message.from_user.id != 848953415: 
         return
 
     # Определяем путь к БД (для Render)
@@ -220,7 +220,7 @@ async def prodamus_webhook(request: Request):
         # --- ОБНОВЛЕННОЕ СООБЩЕНИЕ ПОСЛЕ ВЫДАЧИ ---
         caption_text = (
             f"✅ Оплата подтверждена! Ваш сертификат № {cert_number} готов.\n\n"
-            "🎉 Поздравляем с участием в розыгрыше призов! "
+            "🎉 Поздравляем с участием в розыгрыше призов!\n"
             "Вся информация о розыгрыше здесь - https://t.me/douglas_detailing_bot"
         )
         

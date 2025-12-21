@@ -129,34 +129,52 @@ async def process_name(message: Message, state: FSMContext):
     )
     await state.clear()
 
-# --- ДОБАВЛЕНА АДМИНКА ---
+# --- АДМИНКА: ВЫГРУЗКА ВСЕХ ЗАКАЗОВ В ФАЙЛ ---
 @router.message(Command("listusers"))
 async def list_users(message: Message):
-    # ID Админа (замените, если нужно)
-    if message.from_user.id != 848953415: 
+    # ID Админа
+    if message.from_user.id != 8568411350: 
         return
 
-    # Определяем путь к БД (для Render)
+    # Путь к БД
     db_path = "/var/data/users.db" if os.path.exists("/var/data") else "users.db"
 
     try:
         async with aiosqlite.connect(db_path) as db:
-            async with db.execute("SELECT id, full_name, paid, cert_number FROM certificates ORDER BY id DESC LIMIT 5") as cursor:
+            # Забираем ВСЕ записи (без LIMIT)
+            async with db.execute("SELECT id, full_name, paid, cert_number FROM certificates ORDER BY id DESC") as cursor:
                 rows = await cursor.fetchall()
         
         if not rows:
             await message.answer("База пуста.")
             return
 
-        text = "📋 Последние 5 заказов:\n"
+        # Формируем красивый текст для файла
+        lines = ["=== СПИСОК ВСЕХ ЗАКАЗОВ ===", ""]
         for row in rows:
             cid, name, paid, cnum = row
-            status = "✅" if paid else "⏳"
-            num_str = cnum if cnum else "-"
-            text += f"ID:{cid} | {status} | №{num_str} | {name}\n"
-        await message.answer(text)
+            status = "✅ ОПЛАЧЕН" if paid else "⏳ НЕ ОПЛАЧЕН"
+            num_str = f"№{cnum}" if cnum else "нет номера"
+            
+            # Формат строки в файле:
+            line = f"ID: {cid} | {status} | {num_str} | Имя: {name}"
+            lines.append(line)
+
+        # Объединяем в один большой текст
+        full_text = "\n".join(lines)
+        
+        # Конвертируем строку в байты (виртуальный файл)
+        file_data = full_text.encode("utf-8")
+        
+        # Отправляем файл
+        await message.answer_document(
+            BufferedInputFile(file_data, filename="all_orders.txt"),
+            caption="📂 Полная выгрузка базы заказов"
+        )
+
     except Exception as e:
         await message.answer(f"Ошибка БД: {e}")
+
 # -------------------------
 
 # ======================

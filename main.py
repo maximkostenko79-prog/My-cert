@@ -133,7 +133,7 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(Command("listusers"))
 async def list_users(message: Message):
     # ID Админа
-    if message.from_user.id != 8568411350: 
+    if message.from_user.id != 848953415: 
         return
 
     # Путь к БД

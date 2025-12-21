@@ -20,7 +20,7 @@ import uvicorn
 import asyncio
 import aiosqlite
 
-# Импорты ваших модулей (убедитесь, что они лежат рядом)
+# Импорты ваших модулей
 from database import init_db, create_certificate_request, get_cert_by_id, issue_certificate_number
 from certificate_generator import generate_certificate_image
 
@@ -28,7 +28,6 @@ from certificate_generator import generate_certificate_image
 # Настройки
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-# Секретный ключ (если есть в .env, будет использоваться для логов, но не блокировать)
 PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "")
 
 if not BOT_TOKEN:
@@ -37,21 +36,15 @@ if not BOT_TOKEN:
 TELEGRAM_WEBHOOK_PATH = "/webhook"
 PRODAMUS_WEBHOOK_PATH = "/prodamus-webhook"
 
-# Ссылка на вашу платежную форму (замените на свою, если отличается)
 PRODAMUS_FORM_URL = "https://payform.ru/jga8Qsz/" 
 
 render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 BASE_URL = f"https://{render_host}" if render_host else "http://localhost:8000"
 
 # ======================
-# Утилита проверки подписи (Справочная)
+# Утилита проверки подписи
 # ======================
 def verify_signature(data: Dict[str, Any], secret_key: str, received_sign: str) -> bool:
-    """
-    Попытка проверки подписи.
-    Алгоритм сложный из-за разницы кодировок Python/PHP, поэтому
-    результат этой функции мы будем использовать только для логов.
-    """
     try:
         def recursive_sort(obj):
             if isinstance(obj, dict):
@@ -66,8 +59,6 @@ def verify_signature(data: Dict[str, Any], secret_key: str, received_sign: str) 
             del data_to_sign['Sign']
         
         sorted_data = recursive_sort(data_to_sign)
-        
-        # Эмуляция PHP json_encode
         json_str = json.dumps(sorted_data, separators=(',', ':'), ensure_ascii=False)
         json_str = json_str.replace('/', '\\/') 
         
@@ -83,7 +74,7 @@ def verify_signature(data: Dict[str, Any], secret_key: str, received_sign: str) 
         return False
 
 # ======================
-# FSM (Машина состояний)
+# FSM
 # ======================
 class UserStates(StatesGroup):
     waiting_for_name = State()
@@ -114,18 +105,16 @@ async def process_name(message: Message, state: FSMContext):
         return
 
     user_id = message.from_user.id
-    # Создаем НОВЫЙ заказ в базе
     cert_id = await create_certificate_request(user_id, full_name, 2000)
 
-    # Параметры ссылки согласно документации
     params = {
-        "order_id": str(cert_id),    # Главный ID
-        "sys": str(cert_id),         # Резервный ID
+        "order_id": str(cert_id),
+        "sys": str(cert_id),
         "products[0][name]": "Подарочный сертификат",
         "products[0][price]": "2000",
         "products[0][quantity]": "1",
-        "do": "pay",                 # Сразу открываем оплату
-        "demo_mode": "1"             # ⚠️ УДАЛИТЕ ЭТУ СТРОКУ, КОГДА ЗАКОНЧИТЕ ТЕСТЫ
+        "do": "pay",
+        "demo_mode": "1" 
     }
     
     query_string = urllib.parse.urlencode(params)
@@ -139,6 +128,36 @@ async def process_name(message: Message, state: FSMContext):
         )
     )
     await state.clear()
+
+# --- ДОБАВЛЕНА АДМИНКА ---
+@router.message(Command("listusers"))
+async def list_users(message: Message):
+    # ID Админа (замените, если нужно)
+    if message.from_user.id != 8568411350: 
+        return
+
+    # Определяем путь к БД (для Render)
+    db_path = "/var/data/users.db" if os.path.exists("/var/data") else "users.db"
+
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT id, full_name, paid, cert_number FROM certificates ORDER BY id DESC LIMIT 5") as cursor:
+                rows = await cursor.fetchall()
+        
+        if not rows:
+            await message.answer("База пуста.")
+            return
+
+        text = "📋 Последние 5 заказов:\n"
+        for row in rows:
+            cid, name, paid, cnum = row
+            status = "✅" if paid else "⏳"
+            num_str = cnum if cnum else "-"
+            text += f"ID:{cid} | {status} | №{num_str} | {name}\n"
+        await message.answer(text)
+    except Exception as e:
+        await message.answer(f"Ошибка БД: {e}")
+# -------------------------
 
 # ======================
 # Вебхуки
@@ -155,40 +174,29 @@ async def telegram_webhook(request: Request):
 
 @app.post(PRODAMUS_WEBHOOK_PATH)
 async def prodamus_webhook(request: Request):
-    # 1. Получаем данные
     sign_header = request.headers.get("Sign")
     form_data = await request.form()
     data = dict(form_data)
     
     logging.info(f"📥 PRODAMUS POST DATA: {data}")
 
-    # --- ПРОВЕРКА ПОДПИСИ (МЯГКАЯ) ---
-    # Мы проверяем подпись, пишем в лог результат, но НЕ БЛОКИРУЕМ работу,
-    # если она не совпала. Это решает проблему "❌ НЕВЕРНАЯ ПОДПИСЬ".
     if PRODAMUS_SECRET_KEY and sign_header:
         if verify_signature(data, PRODAMUS_SECRET_KEY, sign_header):
             logging.info("✅ Подпись верна (SECURE)")
         else:
-            logging.warning(f"⚠️ Подпись не совпала! Пришла: {sign_header}. Продолжаем выполнение (INSECURE MODE).")
-    # ---------------------------------
+            logging.warning(f"⚠️ Подпись не совпала! Пришла: {sign_header}. Продолжаем выполнение.")
 
-    # 2. Ищем ID заказа
-    # Продамус может вернуть его в order_num, sys или order_id (зависит от фазы луны)
     order_val = data.get("order_num") or data.get("sys") or data.get("order_id")
 
-    # 3. Обработка тестового запроса (из админки кнопка "Проверить URL")
     if not order_val or order_val in ["test", "тест"] or data.get("test") == "1":
         logging.info("✅ Тестовый пинг от Продамуса (Check URL) - OK")
         return JSONResponse({"status": "ok"})
 
-    # 4. Проверка статуса оплаты
-    # Документация говорит: status 'success' = успешно.
     payment_status = data.get("payment_status", "").lower()
     if payment_status != "success":
         logging.info(f"ℹ️ Оплата не завершена (статус '{payment_status}'). Игнорируем.")
         return JSONResponse({"status": "ok"})
 
-    # 5. Поиск заказа в БД
     try:
         cert_id = int(order_val)
     except ValueError:
@@ -197,27 +205,32 @@ async def prodamus_webhook(request: Request):
 
     cert = await get_cert_by_id(cert_id)
     
-    # Если заказ не найден (например, старый ID=1, которого нет в новой базе)
     if not cert:
-        logging.warning(f"⚠️ Заказ {cert_id} не найден в базе данных. (Возможно, база была сброшена?)")
-        # Возвращаем 200 OK, чтобы Продамус перестал долбиться с этим ID
+        logging.warning(f"⚠️ Заказ {cert_id} не найден в базе данных.")
         return JSONResponse({"status": "ok", "message": "Order not found in DB"})
 
-    # Если уже оплачен
     if cert.get("paid"):
         logging.info(f"ℹ️ Заказ {cert_id} уже был выдан ранее.")
         return JSONResponse({"status": "ok"})
 
-    # 6. Выдача сертификата
     try:
         cert_number = await issue_certificate_number(cert["id"])
         png_bytes = generate_certificate_image(cert["full_name"], cert_number)
         
+        # --- ОБНОВЛЕННОЕ СООБЩЕНИЕ ПОСЛЕ ВЫДАЧИ ---
+        caption_text = (
+            f"✅ Оплата подтверждена! Ваш сертификат № {cert_number} готов.\n\n"
+            "🎉 Поздравляем с участием в розыгрыше призов! "
+            "Вся информация о розыгрыше здесь - https://t.me/douglas_detailing_bot"
+        )
+        
         await bot.send_photo(
             cert["user_id"],
             BufferedInputFile(png_bytes, filename=f"cert_{cert_number}.png"),
-            caption=f"✅ Оплата подтверждена!\nВаш сертификат № {cert_number} готов."
+            caption=caption_text
         )
+        # -------------------------------------------
+        
         logging.info(f"🎉 УСПЕХ! Выдан сертификат №{cert_number} для заказа {cert_id}")
         return JSONResponse({"status": "ok"})
     except Exception as e:

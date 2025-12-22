@@ -113,8 +113,7 @@ async def process_name(message: Message, state: FSMContext):
         "products[0][name]": "Подарочный сертификат",
         "products[0][price]": "2000",
         "products[0][quantity]": "1",
-        "do": "pay",
-        "demo_mode": "1" 
+        "do": "pay"
     }
     
     query_string = urllib.parse.urlencode(params)
